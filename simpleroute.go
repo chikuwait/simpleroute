@@ -41,7 +41,7 @@ func make_packet(dst []byte) ([]byte, error) {
 		Version:  4,
 		Len:      20,
 		TotalLen: 30,
-		TTL:      4,
+		TTL:      3,
 		Protocol: 1, //ICMP
 		Dst:      net.IPv4(dst[0], dst[1], dst[2], dst[3]),
 	}
@@ -69,6 +69,17 @@ func make_packet(dst []byte) ([]byte, error) {
 	return append(ippacket, icmp...), nil
 }
 
+func convertIPv4AddrByteToStr(addr []byte) string {
+	var strAddr string
+	for cnt, s := range addr {
+		strAddr += strconv.Itoa(int(s))
+		if cnt != 3 {
+			strAddr += "."
+		}
+	}
+	return strAddr
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Arg Err")
@@ -85,7 +96,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	rfd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	if err != nil {
+		log.Fatal(err)
+	}
 	sock_addr := syscall.SockaddrInet4{
 		Port: 0,
 		Addr: [4]byte{s_addr[0], s_addr[1], s_addr[2], s_addr[3]},
@@ -99,4 +113,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	recvIPv4Buf := make([]byte, 1024)
+	_, _, err = syscall.Recvfrom(rfd, recvIPv4Buf, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var hopCnt int
+	if recvIPv4Buf[9] == 1 { //IP Header Protocol: ICMP
+		recvICMPBuf := recvIPv4Buf[20:]
+		if recvICMPBuf[0] == 11 { //TTL Exceeded
+			addr := convertIPv4AddrByteToStr(recvIPv4Buf[12:16])
+			domein, err := net.LookupAddr(addr)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("%d. %s %s \n", hopCnt, addr, domein)
+			hopCnt++
+		}
+	}
+
 }
