@@ -26,7 +26,7 @@ func sliceAtob(strings []string) ([]byte, error) {
 	return bytes, nil
 }
 
-func calc_checksum(b []byte) uint16 {
+func calcChecksum(b []byte) uint16 {
 	var sum uint32
 	for i := 0; i < len(b); i += 2 {
 		sum += uint32(b[i]) | (uint32(b[i+1]) << 8)
@@ -36,8 +36,8 @@ func calc_checksum(b []byte) uint16 {
 	return uint16(^sum)
 }
 
-func make_packet(dst []byte) ([]byte, error) {
-	v4header := ipv4.Header{
+func makePacket(dst []byte) ([]byte, error) {
+	v4Header := ipv4.Header{
 		Version:  4,
 		Len:      20,
 		TotalLen: 30,
@@ -58,11 +58,11 @@ func make_packet(dst []byte) ([]byte, error) {
 		0xc0, //Data
 		0xDE, //Data
 	}
-	checksum := calc_checksum(icmp)
+	checksum := calcChecksum(icmp)
 	icmp[2] = byte(checksum)
 	icmp[3] = byte(checksum >> 8)
 
-	ippacket, err := v4header.Marshal()
+	ippacket, err := v4Header.Marshal()
 	if err != nil {
 		return ippacket, err
 	}
@@ -80,31 +80,35 @@ func convertIPv4AddrByteToStr(addr []byte) string {
 	return strAddr
 }
 
+func makeSocket() (sfd int, rfd int, serr error, rerr error) {
+	sfd, serr = syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
+	rfd, rerr = syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	return sfd, rfd, serr, rerr
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Arg Err")
 		os.Exit(1)
 	}
 
-	s_addr, err := sliceAtob(strings.Split(os.Args[1], "."))
+	dst, err := sliceAtob(strings.Split(os.Args[1], "."))
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("s_addr %d\n", s_addr)
 
-	sfd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
-	if err != nil {
-		log.Fatal(err)
+	sfd, rfd, serr, rerr := makeSocket()
+	if serr != nil || rerr != nil {
+		log.Fatal(serr)
+		log.Fatal(rerr)
 	}
-	rfd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	sock_addr := syscall.SockaddrInet4{
 		Port: 0,
-		Addr: [4]byte{s_addr[0], s_addr[1], s_addr[2], s_addr[3]},
+		Addr: [4]byte{dst[0], dst[1], dst[2], dst[3]},
 	}
-	packet, err := make_packet(s_addr)
+
+	packet, err := makePacket(dst)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -115,20 +119,21 @@ func main() {
 	}
 
 	recvIPv4Buf := make([]byte, 1024)
-	_, _, err = syscall.Recvfrom(rfd, recvIPv4Buf, 0)
-	if err != nil {
+	var hopCnt int
+
+	if _, _, err = syscall.Recvfrom(rfd, recvIPv4Buf, 0); err != nil {
 		log.Fatal(err)
 	}
-	var hopCnt int
+
 	if recvIPv4Buf[9] == 1 { //IP Header Protocol: ICMP
 		recvICMPBuf := recvIPv4Buf[20:]
 		if recvICMPBuf[0] == 11 { //TTL Exceeded
 			addr := convertIPv4AddrByteToStr(recvIPv4Buf[12:16])
-			domein, err := net.LookupAddr(addr)
+			domain, err := net.LookupAddr(addr)
 			if err != nil {
 				log.Fatal(err)
 			}
-			fmt.Printf("%d. %s %s \n", hopCnt, addr, domein)
+			fmt.Printf("%d. %s %s \n", hopCnt, addr, domain)
 			hopCnt++
 		}
 	}
