@@ -36,12 +36,12 @@ func calcChecksum(b []byte) uint16 {
 	return uint16(^sum)
 }
 
-func makePacket(dst []byte) ([]byte, error) {
+func makePacket(dst []byte, TTL int) ([]byte, error) {
 	v4Header := ipv4.Header{
 		Version:  4,
 		Len:      20,
 		TotalLen: 30,
-		TTL:      3,
+		TTL:      TTL,
 		Protocol: 1, //ICMP
 		Dst:      net.IPv4(dst[0], dst[1], dst[2], dst[3]),
 	}
@@ -83,6 +83,7 @@ func convertIPv4AddrByteToStr(addr []byte) string {
 func makeSocket() (sfd int, rfd int, serr error, rerr error) {
 	sfd, serr = syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
 	rfd, rerr = syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	rerr = syscall.SetsockoptTimeval(rfd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &syscall.Timeval{Sec: 1, Usec: 0})
 	return sfd, rfd, serr, rerr
 }
 
@@ -108,34 +109,43 @@ func main() {
 		Addr: [4]byte{dst[0], dst[1], dst[2], dst[3]},
 	}
 
-	packet, err := makePacket(dst)
-	if err != nil {
-		log.Fatal(err)
-	}
+	var ttl int = 0
+	var ttlMax int = 30
 
-	err = syscall.Sendto(sfd, packet, 0, &sock_addr)
-	if err != nil {
-		log.Fatal(err)
-	}
+	for {
+		if ttl == ttlMax {
+			break
+		}
+		ttl++
 
-	recvIPv4Buf := make([]byte, 1024)
-	var hopCnt int
+		packet, err := makePacket(dst, ttl)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-	if _, _, err = syscall.Recvfrom(rfd, recvIPv4Buf, 0); err != nil {
-		log.Fatal(err)
-	}
+		err = syscall.Sendto(sfd, packet, 0, &sock_addr)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-	if recvIPv4Buf[9] == 1 { //IP Header Protocol: ICMP
-		recvICMPBuf := recvIPv4Buf[20:]
-		if recvICMPBuf[0] == 11 { //TTL Exceeded
+		recvIPv4Buf := make([]byte, 1024)
+
+		if _, _, err = syscall.Recvfrom(rfd, recvIPv4Buf, 0); err != nil {
+			fmt.Println("* * *")
+		}
+
+		if recvIPv4Buf[9] == 1 { //IP Header Protocol: ICMP
+			recvICMPBuf := recvIPv4Buf[20:]
 			addr := convertIPv4AddrByteToStr(recvIPv4Buf[12:16])
-			domain, err := net.LookupAddr(addr)
-			if err != nil {
-				log.Fatal(err)
+			domain, _ := net.LookupAddr(addr)
+			fmt.Printf("%d. %s %s \n", ttl, addr, domain)
+
+			switch recvICMPBuf[0] {
+			case 0: //Echo Reply
+				os.Exit(0)
+			case 11: //TTL Exceeded
+				continue
 			}
-			fmt.Printf("%d. %s %s \n", hopCnt, addr, domain)
-			hopCnt++
 		}
 	}
-
 }
