@@ -86,6 +86,14 @@ func makeSocket() (sfd int, rfd int, serr error, rerr error) {
 	rerr = syscall.SetsockoptTimeval(rfd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &syscall.Timeval{Sec: 1, Usec: 0})
 	return sfd, rfd, serr, rerr
 }
+func getDstAddr(dst string) ([]byte, error) {
+	addr, err := net.ResolveIPAddr("ip", dst)
+	if err != nil {
+		return nil, err
+	}
+
+	return sliceAtob(strings.Split(addr.String(), "."))
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -93,7 +101,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	dst, err := sliceAtob(strings.Split(os.Args[1], "."))
+	dst, err := getDstAddr(os.Args[1])
 	if err != nil {
 		log.Fatal(err)
 	}
